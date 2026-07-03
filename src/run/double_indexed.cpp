@@ -294,7 +294,17 @@ static void run_query_iteration(const unsigned query_iteration,
 	}
 
 	const Sensitivity sens = options.sensitivity[query_iteration].sensitivity;
-	::Config::set_option(options.index_chunks, config.lowmem_, 0u, config.algo == ::Config::Algo::DOUBLE_INDEXED ? sensitivity_traits.at(sens).index_chunks : 1u);
+	// Index chunks partition the seed space to bound peak seed-array memory, but
+	// each chunk re-enumerates all seeds of the sequence block, so N chunks means
+	// the (dominant) seed-enumeration pass runs N times. With a single thread the
+	// seed-partition granularity (seedp_bits) is unaffected by the chunk count, so
+	// defaulting to a single chunk removes that redundant work (~1.5x faster on
+	// short-read blastx) at the cost of higher peak memory. Multi-threaded runs
+	// keep the sensitivity default; users can always override with -c/--index-chunks.
+	const unsigned default_index_chunks = (config.algo == ::Config::Algo::DOUBLE_INDEXED)
+		? (config.threads_ == 1 ? 1u : sensitivity_traits.at(sens).index_chunks)
+		: 1u;
+	::Config::set_option(options.index_chunks, config.lowmem_, 0u, default_index_chunks);
 	options.seedp_bits = Search::seedp_bits(shapes[0].weight_, config.threads_, options.index_chunks);
 	*log_stream << "Seed partition bits = " << options.seedp_bits << endl;
 	options.lazy_masking = config.algo != ::Config::Algo::DOUBLE_INDEXED && options.target_masking != MaskingAlgo::NONE && config.frame_shift == 0;
